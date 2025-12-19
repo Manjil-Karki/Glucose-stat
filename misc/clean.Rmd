@@ -1,0 +1,172 @@
+--- title: "cleaning" output: html_notebook ---
+```{r}
+library(mice)
+library(dplyr)
+library(zoo)
+library(ggplot2)
+library(gridExtra)
+library(corrplot)
+library(tidyr)
+library(ggrepel)
+library(GGally)
+library(reshape2)
+library(imputeTS)
+```
+```{r}
+data <- read.csv("dataset.csv", header = TRUE) %>%
+  rename(bg_t_plus_1h = `bg.1.00`)
+```
+```{r}
+md.pattern(data)
+```
+```{r}
+vars <- c(
+  "hr_mean",
+  "steps_sum",
+  "cals_sum",
+  "insulin_sum",
+  "carbs_sum",
+  "bg_mean"
+)
+meth <- make.method(data)
+meth["hr_mean"] <- "pmm"   # Predictive Mean Matching
+meth[setdiff(names(meth), "hr_mean")] <- ""
+```
+```{r}
+pred <- make.predictorMatrix(data)
+
+# Do not impute other variables
+pred[, ] <- 0
+
+# Predict hr_mean using these variables
+pred["hr_mean", c(
+  "steps_sum",
+  "cals_sum",
+  "insulin_sum",
+  "carbs_sum",
+  "bg_mean"
+)] <- 1
+```
+```{r}
+set.seed(123)
+
+imp <- mice(
+  data,
+  m = 20,        # number of imputations (good for regression)
+  method = meth,
+  predictorMatrix = pred,
+  maxit = 20,    # iterations
+  printFlag = FALSE
+)
+```
+```{r}
+plot(imp, y = "hr_mean")
+```
+```{r}
+densityplot(imp, ~ hr_mean)
+```
+```{r}
+completed_data <- complete(imp, action = 1)
+
+```
+```{r}
+data_filled <- completed_data
+```
+```{r}
+plot_df <- data.frame(
+  hr_value = c(data$hr_mean, data_filled$hr_mean),
+  Type = factor(c(rep("Original", nrow(data)), rep("Filled", nrow(data))))
+)
+
+plot_df <- plot_df[is.finite(plot_df$hr_value), ]
+
+# Histogram
+p1 <- ggplot(plot_df, aes(x = hr_value, fill = Type)) +
+  geom_histogram(alpha = 0.5, position = "identity", bins = 30, color = "black") +
+  labs(title = "HR Mean Distribution: Original vs Filled",
+       x = "Heart Rate (bpm)", y = "Frequency") +
+  theme_minimal()
+
+
+# Density
+p2 <- ggplot(plot_df, aes(x = hr_value, color = Type)) +
+  geom_density(size = 1.1) +
+  labs(title = "Density Comparison: Original vs Filled",
+       x = "Heart Rate (bpm)", y = "Density") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+
+```
+```{r}
+
+numeric_cols <- c("bg_mean", "insulin_sum", "carbs_sum", 
+                  "hr_mean", "steps_sum", "cals_sum", "bg_t_plus_1h")
+
+data_orig <- data %>% select(all_of(numeric_cols))
+data_filled_num <- data_filled %>% select(all_of(numeric_cols))
+
+# Compute correlations hr_mean vs others for original
+cor_hr_orig <- sapply(data_orig[, setdiff(numeric_cols, "hr_mean")], 
+                      function(x) cor(x, data_orig$hr_mean, use = "pairwise.complete.obs"))
+
+# Compute correlations hr_mean vs others for filled
+cor_hr_filled <- sapply(data_filled_num[, setdiff(numeric_cols, "hr_mean")], 
+                        function(x) cor(x, data_filled_num$hr_mean, use = "pairwise.complete.obs"))
+
+# Combine into one data frame
+cor_df <- data.frame(
+  Variable = rep(names(cor_hr_orig), 2),
+  Correlation = c(as.numeric(cor_hr_orig), as.numeric(cor_hr_filled)),
+  Type = rep(c("Original", "Filled"), each = length(cor_hr_orig))
+)
+
+# Plot
+p_cor <- ggplot(cor_df, aes(x = reorder(Variable, Correlation), y = Correlation, fill = Type)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  geom_text(aes(label = round(Correlation, 2)), position = position_dodge(width = 0.9), vjust = -0.5, size = 4) +
+  scale_fill_manual(values = c("Original" = "skyblue", "Filled" = "orange")) +
+  labs(title = "HR Mean Correlation with Other Variables: Original vs Filled",
+       x = "Variable", y = "Correlation with HR Mean", fill = "Data Type") +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(size = 8),
+    axis.title = element_text(size = 8)
+  )
+
+# Print plot
+print(p_cor)
+```
+```{r}
+start_idx <- 16000
+end_idx <- 17000
+
+# Prepare combined data frame for subset
+plot_df <- data.frame(
+  index = rep(start_idx:end_idx, 2),
+  hr_value = c(data$hr_mean[start_idx:end_idx],
+               data_filled$hr_mean[start_idx:end_idx]),
+  Type = factor(c(rep("Original", end_idx - start_idx + 1),
+                  rep("Filled", end_idx - start_idx + 1)))
+)
+
+# Plot without connecting NAs
+p <- ggplot(plot_df, aes(x = index, y = hr_value, color = Type)) +
+  geom_line(size = 1, na.rm = FALSE) +  # preserve NAs as gaps
+  labs(
+    title = "HR Mean Time Series: Original vs Filled (Index 13000–14000)",
+    x = "Index",
+    y = "Heart Rate (bpm)",
+    color = "Data Type"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 12)
+  )
+
+# Print plot
+print(p)
+```

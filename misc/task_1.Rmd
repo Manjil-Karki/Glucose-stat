@@ -1,0 +1,217 @@
+---
+title: "Task-1 assignment"
+output: html_notebook
+---
+
+
+```{r}
+library(dplyr)
+library(zoo)
+library(ggplot2)
+library(gridExtra)
+library(corrplot)
+```
+
+
+```{r}
+data <- read.csv("dataset.csv", header = TRUE) %>%
+  rename(bg_t_plus_1h = `bg.1.00`)
+```
+
+Data summary exploration
+
+```{r}
+cat("=== Dataset Structure ===\n")
+str(data)
+
+cat("\n=== Missing Values per Column ===\n")
+colSums(is.na(data))
+
+cat("\n=== Number of Zero Values per Column ===\n")
+sapply(data, function(x) sum(x == 0, na.rm = TRUE))
+
+cat("\n=== Outliers Count per Column (IQR method) ===\n")
+outlier_counts <- sapply(data, function(x) {
+  if (!is.numeric(x)) return(NA)
+  
+  x_no_na <- x[!is.na(x)]
+  Q1 <- quantile(x_no_na, 0.25)
+  Q3 <- quantile(x_no_na, 0.75)
+  IQR <- Q3 - Q1
+  
+  sum(x_no_na < (Q1 - 1.5 * IQR) | x_no_na > (Q3 + 1.5 * IQR))
+})
+
+print(outlier_counts)
+
+cat("\n=== Dataset Summary ===\n")
+summary(data)
+
+```
+
+```{r}
+is_na <- is.na(data$hr_mean)
+
+r <- rle(is_na)
+
+
+missing_chunks <- r$lengths[r$values == TRUE]
+
+cat("== Serial missing chunks == \n")
+missing_chunks
+
+```
+
+
+```{r}
+predictors <- c("bg_mean", "insulin_sum", "carbs_sum",
+                "hr_mean", "steps_sum", "cals_sum")
+
+# Set layout to multiple plots per row (optional)
+par(mfrow = c(2, 3), mar = c(4, 4, 3, 1))  # 2 rows, 3 columns
+
+# Loop through each predictor
+
+for (col in predictors) {
+  boxplot(data[[col]], main = paste("Boxplot of", col), col = "lightblue", horizontal = FALSE)
+}
+
+# Reset layout to default
+par(mfrow = c(1, 1))
+```
+
+
+```{r}
+# List of numeric predictors + target
+numeric_cols <- c("bg_mean", "insulin_sum", "carbs_sum", 
+                  "hr_mean", "steps_sum", "cals_sum", "bg_t_plus_1h")
+
+# Set up plotting area
+par(mfrow = c(4, 2), mar = c(4, 4, 2, 1))  # 4x2 grid
+
+for(col in numeric_cols) {
+  
+  hist(data[[col]], 
+       breaks = 30, 
+       col = "lightblue", 
+       border = "white",
+       main = paste("Distribution of", col),
+       xlab = col,
+       prob = TRUE)
+  
+  # Add density line
+  lines(density(data[[col]], na.rm = TRUE), col = "red", lwd = 2)
+  
+  # Add normal distribution curve for reference
+  curve(dnorm(x, mean = mean(data[[col]], na.rm = TRUE),
+                 sd = sd(data[[col]], na.rm = TRUE)),
+        add = TRUE, col = "darkgreen", lwd = 2, lty = 2)
+}
+
+# Reset plotting layout
+par(mfrow = c(1,1))
+```
+
+
+```{r}
+plot_df <- data.frame(
+  hr_value = c(data$hr_mean, data_filled$hr_mean),
+  Type = factor(c(rep("Original", nrow(data)), rep("Filled", nrow(data))))
+)
+
+plot_df <- plot_df[is.finite(plot_df$hr_value), ]
+
+# Histogram
+p1 <- ggplot(plot_df, aes(x = hr_value, fill = Type)) +
+  geom_histogram(alpha = 0.5, position = "identity", bins = 30, color = "black") +
+  labs(title = "HR Mean Distribution: Original vs Filled",
+       x = "Heart Rate (bpm)", y = "Frequency") +
+  theme_minimal()
+
+
+# Density
+p2 <- ggplot(plot_df, aes(x = hr_value, color = Type)) +
+  geom_density(size = 1.1) +
+  labs(title = "Density Comparison: Original vs Filled",
+       x = "Heart Rate (bpm)", y = "Density") +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+
+```
+
+```{r}
+str(data)
+```
+
+
+
+
+```{r}
+ggplot(data, aes(x = 1:nrow(data))) +
+  geom_line(aes(y = bg_mean), color = "blue") +
+  geom_line(aes(y = hr_mean), color = "red") +
+  labs(title = "Time series of bg_mean and hr_mean", x = "Index", y = "Values")
+```
+
+```{r}
+ggplot(data_filled, aes(x = 1:nrow(data_filled))) +
+  geom_line(aes(y = bg_mean), color = "blue") +
+  geom_line(aes(y = hr_mean), color = "red") +
+  labs(title = "Time series of bg_mean and hr_mean", x = "Index", y = "Values")
+```
+
+
+```{r}
+for (col in predictors) {
+  p <- ggplot(data_filled, aes(x = "", y = .data[[col]])) +  # dummy x
+    geom_violin(fill = "lightblue") +
+    geom_boxplot(width = 0.1) +
+    labs(title = paste("Violin + Boxplot of", col), x = NULL)
+  
+  print(p)
+}
+```
+
+
+```{r}
+for (col in predictors) {
+  p <- ggplot(data, aes(x = "", y = .data[[col]])) +  # dummy x
+    geom_violin(fill = "lightblue") +
+    geom_boxplot(width = 0.1) +
+    labs(title = paste("Violin + Boxplot of", col), x = NULL)
+  
+  print(p)
+}
+```
+
+
+
+```{r}
+pairs(data[, numeric_cols], main = "Scatterplot Matrix")
+cor(data[, numeric_cols], use = "complete.obs")
+```
+
+```{r}
+
+corr_matrix_1 <- cor(data_filled[, predictors], use = "pairwise.complete.obs")
+corrplot(corr_matrix_1, method="color", addCoef.col="black")
+```
+```{r}
+corr_matrix_2 <- cor(data[, predictors], use = "pairwise.complete.obs")
+corrplot(corr_matrix_2, method="color", addCoef.col="black")
+```
+
+```{r}
+#write.csv(data_filled, "clean_dataset.csv", row.names = FALSE)
+
+```
+```{r}
+#write.csv(data, "compare.csv", row.names = FALSE)
+```
+
+
+```{r}
+getwd()
+```
+

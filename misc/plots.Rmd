@@ -1,0 +1,393 @@
+---
+title: "Task 1 plots"
+output: html_notebook
+---
+
+```{r}
+# data <- read.csv("dataset.csv", header = TRUE) %>%
+#   rename(bg_t_plus_1h = `bg.1.00`)
+data <- read.csv("clean_dataset.csv", header = TRUE)
+```
+```{r}
+summary(data)
+```
+```{r}
+summary(X_scaled)
+```
+
+
+
+```{r}
+library(dplyr)
+library(zoo)
+library(ggplot2)
+library(gridExtra)
+library(corrplot)
+library(tidyr)
+library(ggrepel)
+library(GGally)
+library(reshape2)
+```
+
+
+
+```{r}
+data <- read.csv("dataset.csv", header = TRUE) %>%
+  rename(bg_t_plus_1h = `bg.1.00`)
+```
+
+
+```{r}
+numeric_cols <- c("bg_mean", "insulin_sum", "carbs_sum", 
+                  "hr_mean", "steps_sum", "cals_sum", "bg_t_plus_1h")
+
+# Assign colors per variable
+variable_colors <- c(
+  bg_mean = "blue",
+  insulin_sum = "red",
+  carbs_sum = "green",
+  hr_mean = "purple",
+  steps_sum = "orange",
+  cals_sum = "brown",
+  bg_t_plus_1h = "darkcyan"
+)
+```
+
+
+```{r}
+data_long <- data %>%
+  select(all_of(numeric_cols)) %>%
+  mutate(index = row_number()) %>%
+  pivot_longer(
+    cols = all_of(numeric_cols),
+    names_to = "variable",
+    values_to = "value"
+  )
+
+# Ensure facets appear in the order specified in numeric_cols
+data_long$variable <- factor(data_long$variable, levels = numeric_cols)
+
+# Create faceted plot
+p <- ggplot(data_long, aes(x = index, y = value)) +
+  geom_line(data = subset(data_long, variable == "bg_mean"), color = "blue", size = 1) +
+  geom_line(data = subset(data_long, variable == "insulin_sum"), color = "red", size = 1) +
+  geom_line(data = subset(data_long, variable == "carbs_sum"), color = "green", size = 1) +
+  geom_line(data = subset(data_long, variable == "hr_mean"), color = "purple", size = 1) +
+  geom_line(data = subset(data_long, variable == "steps_sum"), color = "orange", size = 1) +
+  geom_line(data = subset(data_long, variable == "cals_sum"), color = "brown", size = 1) +
+  geom_line(data = subset(data_long, variable == "bg_t_plus_1h"), color = "darkcyan", size = 1) +
+  facet_wrap(~ variable, scales = "free_y", ncol = 1) +
+  labs(
+    title = "Time Series of Numeric Variables",
+    x = "Index",
+    y = "Value"
+  ) +
+  theme_minimal(base_size = 20) +              # base font size
+  theme(
+    strip.text = element_text(face = "bold", size = 32),  # bigger facet labels
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16),
+    axis.title = element_text(size = 18),
+    legend.position = "none"  # remove legend
+  )
+
+# Print plot in RStudio / interactive session
+print(p)
+
+# Save plot with wide and tall dimensions
+n_vars <- length(numeric_cols)
+ggsave("images/time_series_facets.png",
+       plot = p,
+       width = 32,            # wide
+       height = 4 * n_vars,   # tall per subplot
+       dpi = 150)
+```
+
+
+
+
+
+```{r}
+
+data_subset <- data %>%
+  slice(8000:9000)
+
+normalize <- function(x) {
+  (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
+}
+
+# ---------------------------
+# Plot 1: bg_t_plus_1h alone (normalized)
+# ---------------------------
+data_subset <- data_subset %>% mutate(bg_t_plus_1h_norm = normalize(bg_t_plus_1h))
+
+p_bg <- ggplot(data_subset, aes(x = 8000:9000, y = bg_t_plus_1h_norm)) +
+  geom_line(color = "darkcyan", size = 1, na.rm = TRUE) +
+  labs(x = "Index", y = "Value") +
+  theme_minimal(base_size = 16) +
+  theme(
+    axis.text = element_text(size = 14),
+    axis.title = element_text(size = 16),
+    legend.text = element_text(size = 20),
+    legend.title = element_text(size = 20)
+  )
+
+print(p_bg)
+ggsave("images/bg_t_plus1h_norm.png", plot = p_bg, width = 30, height = 6, dpi = 150)
+
+# ---------------------------
+# Plot 2a: Steps, Calories, HR cluster (normalized)
+# ---------------------------
+cluster1 <- c("steps_sum", "cals_sum", "hr_mean")
+data_long1 <- data_subset %>%
+  select(all_of(cluster1)) %>%
+  mutate(across(all_of(cluster1), normalize)) %>%
+  mutate(index = 8000:9000) %>%
+  pivot_longer(cols = all_of(cluster1), names_to = "variable", values_to = "value")
+
+colors1 <- c("orange", "brown", "purple")
+
+p_cluster1 <- ggplot(data_long1, aes(x = index, y = value, color = variable)) +
+  geom_line(size = 1, na.rm = TRUE) +
+  scale_color_manual(values = colors1) +
+  labs(x = "Index", y = "Value") +
+  theme_minimal(base_size = 16) +
+  theme(
+    axis.text = element_text(size = 14),
+    axis.title = element_text(size = 16),
+    legend.text = element_text(size = 20),
+    legend.title = element_text(size = 20)
+  )
+
+print(p_cluster1)
+ggsave("images/cluster_steps_cals_hr_norm.png", plot = p_cluster1, width = 30, height = 6, dpi = 150)
+
+cluster2 <- c("bg_mean", "insulin_sum", "carbs_sum")
+data_long2 <- data_subset %>%
+  select(all_of(cluster2)) %>%
+  mutate(across(all_of(cluster2), normalize)) %>%
+  mutate(index = 8000:9000) %>%
+  pivot_longer(cols = all_of(cluster2), names_to = "variable", values_to = "value")
+
+colors2 <- c("blue", "red", "green")
+
+p_cluster2 <- ggplot(data_long2, aes(x = index, y = value, color = variable)) +
+  geom_line(size = 1, na.rm = TRUE) +
+  scale_color_manual(values = colors2) +
+  labs( x = "Index", y = "Value") +
+  theme_minimal(base_size = 16) +
+  theme(
+    axis.text = element_text(size = 14),
+    axis.title = element_text(size = 16),
+    legend.text = element_text(size = 20),
+    legend.title = element_text(size = 20)
+  ) 
+
+print(p_cluster2)
+ggsave("images/cluster_bg_insulin_carbs_norm.png", plot = p_cluster2, width = 30, height = 6, dpi = 150)
+
+```
+
+
+```{r}
+predictors <- c("bg_mean", "insulin_sum", "carbs_sum", 
+                "hr_mean", "steps_sum", "cals_sum")
+target <- "bg_t_plus_1h"
+
+# Function to create histogram + density with legend and larger title
+create_hist_density_legend <- function(data, var_name){
+  mean_val <- mean(data[[var_name]], na.rm=TRUE)
+  median_val <- median(data[[var_name]], na.rm=TRUE)
+  
+  # Data frame to map vlines to legend
+  vlines_df <- data.frame(
+    x = c(mean_val, median_val),
+    Type = c("Mean", "Median")
+  )
+  
+  ggplot(data, aes_string(x=var_name)) +
+    geom_histogram(aes(y=..density..), bins=30, fill="skyblue", color="black", alpha=0.6) +
+    geom_density(color="red", size=1) +
+    geom_vline(data=vlines_df, aes(xintercept=x, color=Type), linetype="dashed", size=0.8) +
+    scale_color_manual(values=c("Mean"="blue", "Median"="darkgreen")) +
+    labs(title=var_name, x="Value", y="Density", color="Statistic") +
+    theme_minimal(base_size=16) +
+    theme(
+      legend.position="top",
+      plot.title = element_text(size=20, face="bold"),
+      strip.text = element_text(size=18, face="bold")
+    )
+}
+
+# Create plots for predictors (3x2)
+plots_predictors <- lapply(predictors, function(x) create_hist_density_legend(data, x))
+grid_predictors <- grid.arrange(grobs=plots_predictors, ncol=2, nrow=3)
+
+# Save 3x2 grid
+ggsave("images/hist_density_predictors_3x2_legend_bigtitle.png", plot=grid_predictors, width=15, height=15, dpi=150)
+
+# Create single plot for target
+plot_target <- create_hist_density_legend(data, target) +
+  ggtitle("Target Variable: bg_t_plus_1h") +
+  theme(plot.title = element_text(size=22, face="bold"))
+
+# Print target plot
+print(plot_target)
+
+# Save target plot
+ggsave("images/hist_density_target_legend_bigtitle.png", plot=plot_target, width=15, height=6, dpi=150)
+
+```
+```{r}
+data_numeric <- data %>% select(all_of(numeric_cols))
+
+# Compute correlation matrix (pairwise complete observations)
+corr_matrix <- cor(data_numeric, use = "pairwise.complete.obs")
+
+# Plot correlation heatmap with values
+png("images/correlation_heatmap.png", width=600, height=600)
+corrplot(corr_matrix, method="color", addCoef.col="black", 
+         tl.cex=1.2, number.cex=1, tl.col="black", order="original",
+         title="Correlation Heatmap of Predictors and Target")
+dev.off()
+```
+
+
+```{r}
+
+predictors <- c("bg_mean", "insulin_sum", "carbs_sum", "hr_mean", "steps_sum", "cals_sum")
+target <- "bg_t_plus_1h"
+
+# Create individual scatter plots with linear fit
+plots <- lapply(predictors, function(x) {
+  ggplot(data, aes_string(x = x, y = target)) +
+    geom_point(alpha = 0.6, color = "skyblue", size=0.7) +
+    geom_smooth(method = "lm", color = "red", se = FALSE) +
+    labs(x = x, y = target) +
+    theme_minimal(base_size = 14)
+})
+
+# Arrange in 2x3 grid
+scatter_grid <- grid.arrange(grobs = plots, ncol = 2, nrow = 3)
+
+# Save the figure
+ggsave("images/scatter_predictors_vs_target.png", plot = scatter_grid, width = 14, height = 12, dpi = 150)
+```
+
+
+```{r}
+plot_df <- data.frame(
+  hr_value = c(data$hr_mean, data_filled$hr_mean),
+  Type = factor(c(rep("Original", nrow(data)), rep("Filled", nrow(data))))
+)
+plot_df <- plot_df[is.finite(plot_df$hr_value), ]
+
+# Histogram
+p1 <- ggplot(plot_df, aes(x = hr_value, fill = Type)) +
+  geom_histogram(alpha = 0.5, position = "identity", bins = 30, color = "black") +
+  labs(title = "HR Mean Distribution: Original vs Filled",
+       x = "Heart Rate (bpm)", y = "Frequency") +
+  theme_minimal()
+
+# Density
+p2 <- ggplot(plot_df, aes(x = hr_value, color = Type)) +
+  geom_density(size = 1.1) +
+  labs(title = "Density Comparison: Original vs Filled",
+       x = "Heart Rate (bpm)", y = "Density") +
+  theme_minimal()
+
+# Combine plots
+combined_plot <- grid.arrange(p1, p2, ncol = 2)
+
+# Save combined plot to file
+ggsave("images/hr_distribution_comparison.png", plot = combined_plot,
+       width = 14, height = 6, dpi = 150)
+```
+
+
+```{r}
+start_idx <- 16000
+end_idx <- 17000
+
+# Prepare combined data frame for subset
+plot_df <- data.frame(
+  index = rep(start_idx:end_idx, 2),
+  hr_value = c(data$hr_mean[start_idx:end_idx],
+               data_filled$hr_mean[start_idx:end_idx]),
+  Type = factor(c(rep("Original", end_idx - start_idx + 1),
+                  rep("Filled", end_idx - start_idx + 1)))
+)
+
+# Plot without connecting NAs
+p <- ggplot(plot_df, aes(x = index, y = hr_value, color = Type)) +
+  geom_line(size = 1, na.rm = FALSE) +  # preserve NAs as gaps
+  labs(
+    title = "HR Mean Time Series: Original vs Filled (Index 13000–14000)",
+    x = "Index",
+    y = "Heart Rate (bpm)",
+    color = "Data Type"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 12)
+  )
+
+# Print plot
+print(p)
+
+# Save to file
+ggsave("images/hr_mean_original_vs_filled_13000_14000_gaps.png",
+       plot = p, width = 14, height = 6, dpi = 150)
+```
+
+
+```{r}
+
+numeric_cols <- c("bg_mean", "insulin_sum", "carbs_sum", 
+                  "hr_mean", "steps_sum", "cals_sum", "bg_t_plus_1h")
+
+data_orig <- data %>% select(all_of(numeric_cols))
+data_filled_num <- data_filled %>% select(all_of(numeric_cols))
+
+# Compute correlations hr_mean vs others for original
+cor_hr_orig <- sapply(data_orig[, setdiff(numeric_cols, "hr_mean")], 
+                      function(x) cor(x, data_orig$hr_mean, use = "pairwise.complete.obs"))
+
+# Compute correlations hr_mean vs others for filled
+cor_hr_filled <- sapply(data_filled_num[, setdiff(numeric_cols, "hr_mean")], 
+                        function(x) cor(x, data_filled_num$hr_mean, use = "pairwise.complete.obs"))
+
+# Combine into one data frame
+cor_df <- data.frame(
+  Variable = rep(names(cor_hr_orig), 2),
+  Correlation = c(as.numeric(cor_hr_orig), as.numeric(cor_hr_filled)),
+  Type = rep(c("Original", "Filled"), each = length(cor_hr_orig))
+)
+
+# Plot
+p_cor <- ggplot(cor_df, aes(x = reorder(Variable, Correlation), y = Correlation, fill = Type)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  geom_text(aes(label = round(Correlation, 2)), position = position_dodge(width = 0.9), vjust = -0.5, size = 4) +
+  scale_fill_manual(values = c("Original" = "skyblue", "Filled" = "orange")) +
+  labs(title = "HR Mean Correlation with Other Variables: Original vs Filled",
+       x = "Variable", y = "Correlation with HR Mean", fill = "Data Type") +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    axis.text.x = element_text(size = 14),
+    axis.title = element_text(size = 16)
+  )
+
+# Print plot
+print(p_cor)
+
+# Save to file
+ggsave("images/correlation_hr_mean_original_vs_filled.png", plot = p_cor, width = 12, height = 6, dpi = 150)
+```
+
+
+```{r}
+```
+

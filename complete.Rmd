@@ -1,0 +1,681 @@
+---
+title: "ALL codes"
+output: html_notebook
+---
+```{r}
+library(dplyr)
+library(zoo)
+library(ggplot2)
+library(gridExtra)
+library(corrplot)
+library(tidyr)
+library(ggrepel)
+library(GGally)
+library(reshape2)
+library(mice)
+library(MASS)
+```
+```{r}
+data <- read.csv("dataset.csv", header = TRUE) %>%
+  rename(bg_t_plus_1h = `bg.1.00`)
+```
+```{r}
+cat("=== Dataset Structure ===\n")
+str(data)
+
+cat("\n=== Missing Values per Column ===\n")
+colSums(is.na(data))
+
+cat("\n=== Number of Zero Values per Column ===\n")
+sapply(data, function(x) sum(x == 0, na.rm = TRUE))
+
+cat("\n=== Outliers Count per Column (IQR method) ===\n")
+outlier_counts <- sapply(data, function(x) {
+  if (!is.numeric(x)) return(NA)
+  
+  x_no_na <- x[!is.na(x)]
+  Q1 <- quantile(x_no_na, 0.25)
+  Q3 <- quantile(x_no_na, 0.75)
+  IQR <- Q3 - Q1
+  
+  sum(x_no_na < (Q1 - 1.5 * IQR) | x_no_na > (Q3 + 1.5 * IQR))
+})
+
+print(outlier_counts)
+
+cat("\n=== Dataset Summary ===\n")
+summary(data)
+
+```
+```{r}
+numeric_cols <- c("bg_mean", "insulin_sum", "carbs_sum", 
+                  "hr_mean", "steps_sum", "cals_sum", "bg_t_plus_1h")
+data_long <- data %>%
+  select(all_of(numeric_cols)) %>%
+  mutate(index = row_number()) %>%
+  pivot_longer(
+    cols = all_of(numeric_cols),
+    names_to = "variable",
+    values_to = "value"
+  )
+
+# Ensure facets appear in the order specified in numeric_cols
+data_long$variable <- factor(data_long$variable, levels = numeric_cols)
+
+# Create faceted plot
+p <- ggplot(data_long, aes(x = index, y = value)) +
+  geom_line(data = subset(data_long, variable == "bg_mean"), color = "blue", size = 1) +
+  geom_line(data = subset(data_long, variable == "insulin_sum"), color = "red", size = 1) +
+  geom_line(data = subset(data_long, variable == "carbs_sum"), color = "green", size = 1) +
+  geom_line(data = subset(data_long, variable == "hr_mean"), color = "purple", size = 1) +
+  geom_line(data = subset(data_long, variable == "steps_sum"), color = "orange", size = 1) +
+  geom_line(data = subset(data_long, variable == "cals_sum"), color = "brown", size = 1) +
+  geom_line(data = subset(data_long, variable == "bg_t_plus_1h"), color = "darkcyan", size = 1) +
+  facet_wrap(~ variable, scales = "free_y", ncol = 1) +
+  labs(
+    title = "Time Series of Numeric Variables",
+    x = "Index",
+    y = "Value"
+  ) +
+  theme_minimal(base_size = 20) +              # base font size
+  theme(
+    strip.text = element_text(face = "bold", size = 32),  # bigger facet labels
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16),
+    axis.title = element_text(size = 18),
+    legend.position = "none"  # remove legend
+  )
+
+# Print plot in RStudio / interactive session
+print(p)
+
+# Save plot with wide and tall dimensions
+n_vars <- length(numeric_cols)
+ggsave("images/time_series_facets.png",
+       plot = p,
+       width = 32,            # wide
+       height = 4 * n_vars,   # tall per subplot
+       dpi = 150)
+
+```
+
+
+```{r}
+predictors <- c("bg_mean", "insulin_sum", "carbs_sum", 
+                "hr_mean", "steps_sum", "cals_sum")
+target <- "bg_t_plus_1h"
+
+# Function to create histogram + density with legend and larger title
+create_hist_density_legend <- function(data, var_name){
+  mean_val <- mean(data[[var_name]], na.rm=TRUE)
+  median_val <- median(data[[var_name]], na.rm=TRUE)
+  
+  # Data frame to map vlines to legend
+  vlines_df <- data.frame(
+    x = c(mean_val, median_val),
+    Type = c("Mean", "Median")
+  )
+  
+  ggplot(data, aes_string(x=var_name)) +
+    geom_histogram(aes(y=..density..), bins=30, fill="skyblue", color="black", alpha=0.6) +
+    geom_density(color="red", size=1) +
+    geom_vline(data=vlines_df, aes(xintercept=x, color=Type), linetype="dashed", size=0.8) +
+    scale_color_manual(values=c("Mean"="blue", "Median"="darkgreen")) +
+    labs(title=var_name, x="Value", y="Density", color="Statistic") +
+    theme_minimal(base_size=16) +
+    theme(
+      legend.position="top",
+      plot.title = element_text(size=20, face="bold"),
+      strip.text = element_text(size=18, face="bold")
+    )
+}
+
+# Create plots for predictors (3x2)
+plots_predictors <- lapply(predictors, function(x) create_hist_density_legend(data, x))
+grid_predictors <- grid.arrange(grobs=plots_predictors, ncol=2, nrow=3)
+
+# Save 3x2 grid
+#ggsave("images/hist_density_predictors_3x2_legend_bigtitle.png", plot=grid_predictors, width=15, height=15, dpi=150)
+
+# Create single plot for target
+plot_target <- create_hist_density_legend(data, target) +
+  ggtitle("Target Variable: bg_t_plus_1h") +
+  theme(plot.title = element_text(size=22, face="bold"))
+
+# Print target plot
+print(plot_target)
+
+# Save target plot
+#ggsave("images/hist_density_target_legend_bigtitle.png", plot=plot_target, width=15, height=6, dpi=150)
+
+```
+```{r}
+data_numeric <- data %>% select(all_of(numeric_cols))
+
+# Compute correlation matrix (pairwise complete observations)
+corr_matrix <- cor(data_numeric, use = "pairwise.complete.obs")
+
+# Plot correlation heatmap with values
+#png("images/correlation_heatmap.png", width=600, height=600)
+corrplot(corr_matrix, method="color", addCoef.col="black", 
+         tl.cex=1.2, number.cex=1, tl.col="black", order="original",
+         title="Correlation Heatmap of Predictors and Target")
+
+
+predictors <- c("bg_mean", "insulin_sum", "carbs_sum", "hr_mean", "steps_sum", "cals_sum")
+target <- "bg_t_plus_1h"
+
+# Create individual scatter plots with linear fit
+plots <- lapply(predictors, function(x) {
+  ggplot(data, aes_string(x = x, y = target)) +
+    geom_point(alpha = 0.6, color = "skyblue", size=0.7) +
+    geom_smooth(method = "lm", color = "red", se = FALSE) +
+    labs(x = x, y = target) +
+    theme_minimal(base_size = 14)
+})
+
+# Arrange in 2x3 grid
+scatter_grid <- grid.arrange(grobs = plots, ncol = 2, nrow = 3)
+
+# Save the figure
+#ggsave("images/scatter_predictors_vs_target.png", plot = scatter_grid, width = 14, height = 12, dpi = 150)
+
+```
+
+
+```{r}
+# Variables of interest
+vars <- c(
+  "bg_mean", "insulin_sum", "carbs_sum",
+  "hr_mean", "steps_sum", "cals_sum"
+)
+
+# Subset the data
+data_sub <- data[, vars]
+
+# Initialize mice to get default methods and predictor matrix
+ini <- mice(data_sub, maxit = 0)
+meth <- ini$method
+pred <- ini$predictorMatrix
+
+# Impute only 'hr_mean' using predictive mean matching (PMM)
+meth["hr_mean"] <- "pmm"
+meth[names(meth) != "hr_mean"] <- ""        # no imputation for other vars
+pred["hr_mean", "hr_mean"] <- 0             # exclude self as predictor
+
+# Perform multiple imputation
+imp <- mice(
+  data_sub,
+  method = meth,
+  predictorMatrix = pred,
+  m = 5,
+  maxit = 20,
+  seed = 123
+)
+
+# Complete one imputed dataset
+data_imp <- complete(imp, 1)
+
+# Predictor matrix
+X <- as.matrix(data_imp)
+
+# Response (not scaled)
+y <- data$bg_t_plus_1h
+
+# Standardize predictors (mean = 0, SD = 1)
+X_scaled <- scale(X)
+
+# Optional: check scaling
+colMeans(X_scaled)         # should be ~0
+apply(X_scaled, 2, sd) 
+
+```
+```{r}
+summary(X_scaled)
+```
+```{r}
+clean_data <- read.csv("clean_dataset.csv", header = TRUE)
+summary(clean_data)
+```
+```{r}
+data[, vars] <- data_imp
+scaled_vars <- paste0(vars, "_scaled")
+data[, scaled_vars] <- as.data.frame(X_scaled)
+```
+
+
+```{r}
+cat("TASK 2: NONLINEAR POLYNOMIAL REGRESSION\n")
+
+# Prepare data
+X <- data[, c("bg_mean", "insulin_sum", "carbs_sum", "hr_mean", "steps_sum", "cals_sum")]
+y <- data$`bg_t_plus_1h`
+n <- nrow(X)
+```
+```{r}
+X1 <- cbind(1, X$bg_mean^3, X$insulin_sum^2, X$carbs_sum^2,
+            X$hr_mean, X$steps_sum, X$cals_sum)
+beta1 <- solve(t(X1) %*% X1) %*% t(X1) %*% y
+y_pred1 <- X1 %*% beta1
+residuals1 <- y - y_pred1# Model 2: y = β₁·x₁² + β₂·x₂² + β₃·x₃³ + β₄·x₄ + β₅·x₅ + β₆·x₆ + β₀
+X2 <- cbind(1, X$bg_mean^2, X$insulin_sum^2, X$carbs_sum^3,
+            X$hr_mean, X$steps_sum, X$cals_sum)
+
+#beta2 <- solve(t(X2) %*% X2) %*% t(X2) %*% y
+beta2 <- qr.solve(X2, y)
+y_pred2 <- X2 %*% beta2
+residuals2 <- y - y_pred2
+
+# Model 3: y = β₁·x₁ + β₂·x₂ + β₃·x₃ + β₄·x₄² + β₅·x₅ + β₆·x₆² + β₀
+X3 <- cbind(1, X$bg_mean, X$insulin_sum, X$carbs_sum,
+            X$hr_mean^2, X$steps_sum, X$cals_sum^2)
+beta3 <- solve(t(X3) %*% X3) %*% t(X3) %*% y
+y_pred3 <- X3 %*% beta3
+residuals3 <- y - y_pred3
+
+# Model 4: y = β₁·x₁² + β₂·x₂² + β₃·x₃² + β₄·x₄² + β₅·x₅² + β₆·x₆² + β₀
+X4 <- cbind(1, X$bg_mean^2, X$insulin_sum^2, X$carbs_sum^2,
+            X$hr_mean^2, X$steps_sum^2, X$cals_sum^2)
+#beta4 <- solve(t(X4) %*% X4) %*% t(X4) %*% y
+beta4 <- qr.solve(X4, y)
+y_pred4 <- X4 %*% beta4
+residuals4 <- y - y_pred4
+
+# Model 5: y = β₁·x₁ + β₂·x₂ + β₃·x₃ + β₄·x₄ + β₅·x₅ + β₆·x₆ + β₇·x₁x₂ + β₈·x₃x₄ + β₉·x₂x₆ + β₀
+X5 <- cbind(1, X$bg_mean, X$insulin_sum, X$carbs_sum, X$hr_mean, X$steps_sum, X$cals_sum,
+            X$bg_mean * X$insulin_sum, X$carbs_sum * X$hr_mean, X$insulin_sum * X$cals_sum)
+beta5 <- solve(t(X5) %*% X5) %*% t(X5) %*% y
+y_pred5 <- X5 %*% beta5
+residuals5 <- y - y_pred5
+```
+
+
+```{r}
+cat("TASK 2.1: Estimated Model Parameters\n")
+cat("----------------------------------------\n")
+cat("Model 1:\n")
+print(beta1)
+cat("\nModel 2:\n")
+print(beta2)
+cat("\nModel 3:\n")
+print(beta3)
+cat("\nModel 4:\n")
+print(beta4)
+cat("\nModel 5:\n")
+print(beta5)
+cat("\n")
+```
+```{r}
+RSS1 <- sum(residuals1^2)
+RSS2 <- sum(residuals2^2)
+RSS3 <- sum(residuals3^2)
+RSS4 <- sum(residuals4^2)
+RSS5 <- sum(residuals5^2)
+
+cat("TASK 2.2: Residual Sum of Squares (RSS)\n")
+cat("----------------------------------------\n")
+cat("Model 1 RSS:", RSS1, "\n")
+cat("Model 2 RSS:", RSS2, "\n")
+cat("Model 3 RSS:", RSS3, "\n")
+cat("Model 4 RSS:", RSS4, "\n")
+cat("Model 5 RSS:", RSS5, "\n\n")
+```
+```{r}
+compute_loglik <- function(residuals, n) {
+  sigma2 <- sum(residuals^2) / n
+  loglik <- -n/2 * log(2 * pi) - n/2 * log(sigma2) - 1/(2*sigma2) * sum(residuals^2)
+  return(loglik)
+}
+
+loglik1 <- compute_loglik(residuals1, n)
+loglik2 <- compute_loglik(residuals2, n)
+loglik3 <- compute_loglik(residuals3, n)
+loglik4 <- compute_loglik(residuals4, n)
+loglik5 <- compute_loglik(residuals5, n)
+
+cat("TASK 2.3: Log-Likelihood\n")
+cat("----------------------------------------\n")
+cat("Model 1 Log-Likelihood:", loglik1, "\n")
+cat("Model 2 Log-Likelihood:", loglik2, "\n")
+cat("Model 3 Log-Likelihood:", loglik3, "\n")
+cat("Model 4 Log-Likelihood:", loglik4, "\n")
+cat("Model 5 Log-Likelihood:", loglik5, "\n\n")
+```
+
+
+```{r}
+k1 <- k2 <- k3 <- k4 <- 7  # 6 predictors + intercept
+k5 <- 10  # 6 predictors + 3 interactions + intercept
+
+AIC1 <- -2 * loglik1 + 2 * k1
+AIC2 <- -2 * loglik2 + 2 * k2
+AIC3 <- -2 * loglik3 + 2 * k3
+AIC4 <- -2 * loglik4 + 2 * k4
+AIC5 <- -2 * loglik5 + 2 * k5
+
+BIC1 <- -2 * loglik1 + k1 * log(n)
+BIC2 <- -2 * loglik2 + k2 * log(n)
+BIC3 <- -2 * loglik3 + k3 * log(n)
+BIC4 <- -2 * loglik4 + k4 * log(n)
+BIC5 <- -2 * loglik5 + k5 * log(n)
+
+cat("TASK 2.4: AIC and BIC\n")
+cat("----------------------------------------\n")
+cat("Model 1 - AIC:", AIC1, " BIC:", BIC1, "\n")
+cat("Model 2 - AIC:", AIC2, " BIC:", BIC2, "\n")
+cat("Model 3 - AIC:", AIC3, " BIC:", BIC3, "\n")
+cat("Model 4 - AIC:", AIC4, " BIC:", BIC4, "\n")
+cat("Model 5 - AIC:", AIC5, " BIC:", BIC5, "\n\n")
+```
+
+
+```{r}
+comparison_table <- data.frame(
+  Model = 1:5,
+  RSS = c(RSS1, RSS2, RSS3, RSS4, RSS5),
+  LogLik = c(loglik1, loglik2, loglik3, loglik4, loglik5),
+  AIC = c(AIC1, AIC2, AIC3, AIC4, AIC5),
+  BIC = c(BIC1, BIC2, BIC3, BIC4, BIC5),
+  Num_Params = c(k1, k2, k3, k4, k5)
+)
+
+cat("Model Comparison Table:\n")
+print(comparison_table)
+cat("\n")
+```
+
+
+```{r}
+cat("TASK 2.5: Residual Distribution Analysis\n")
+cat("----------------------------------------\n")
+
+par(mfrow = c(5, 2), mar = c(4, 4, 2, 1))
+par(mfrow = c(5, 2), mar = c(4, 4, 2, 1))
+# Model 1
+hist(residuals1, breaks = 30, col = "lightblue", border = "white",
+     main = "Model 1: Residuals Histogram", xlab = "Residuals", prob = TRUE)
+lines(density(residuals1), col = "blue", lwd = 2)
+curve(dnorm(x, mean = mean(residuals1), sd = sd(residuals1)), add = TRUE, col = "red", lwd = 2, lty = 2)
+qqnorm(residuals1, main = "Model 1: Q-Q Plot", pch = 19, col = rgb(0, 0, 1, 0.5))
+qqline(residuals1, col = "red", lwd = 2)
+
+# Model 2
+hist(residuals2, breaks = 30, col = "lightgreen", border = "white",
+     main = "Model 2: Residuals Histogram", xlab = "Residuals", prob = TRUE)
+lines(density(residuals2), col = "green", lwd = 2)
+curve(dnorm(x, mean = mean(residuals2), sd = sd(residuals2)), add = TRUE, col = "red", lwd = 2, lty = 2)
+qqnorm(residuals2, main = "Model 2: Q-Q Plot", pch = 19, col = rgb(0, 1, 0, 0.5))
+qqline(residuals2, col = "red", lwd = 2)
+
+# Model 3
+hist(residuals3, breaks = 30, col = "plum", border = "white",
+     main = "Model 3: Residuals Histogram", xlab = "Residuals", prob = TRUE)
+lines(density(residuals3), col = "purple", lwd = 2)
+curve(dnorm(x, mean = mean(residuals3), sd = sd(residuals3)), add = TRUE, col = "red", lwd = 2, lty = 2)
+qqnorm(residuals3, main = "Model 3: Q-Q Plot", pch = 19, col = rgb(1, 0, 1, 0.5))
+qqline(residuals3, col = "red", lwd = 2)
+
+# Model 4
+hist(residuals4, breaks = 30, col = "peachpuff", border = "white",
+     main = "Model 4: Residuals Histogram", xlab = "Residuals", prob = TRUE)
+lines(density(residuals4), col = "orange", lwd = 2)
+curve(dnorm(x, mean = mean(residuals4), sd = sd(residuals4)), add = TRUE, col = "red", lwd = 2, lty = 2)
+qqnorm(residuals4, main = "Model 4: Q-Q Plot", pch = 19, col = rgb(1, 0.5, 0, 0.5))
+qqline(residuals4, col = "red", lwd = 2)
+
+# Model 5
+hist(residuals5, breaks = 30, col = "wheat", border = "white",
+     main = "Model 5: Residuals Histogram", xlab = "Residuals", prob = TRUE)
+lines(density(residuals5), col = "brown", lwd = 2)
+curve(dnorm(x, mean = mean(residuals5), sd = sd(residuals5)), add = TRUE, col = "red", lwd = 2, lty = 2)
+qqnorm(residuals5, main = "Model 5: Q-Q Plot", pch = 19, col = rgb(0.6, 0.3, 0, 0.5))
+qqline(residuals5, col = "red", lwd = 2)
+
+par(mfrow = c(1, 1))
+```
+
+
+```{r}
+cat("TASK 2.6: Model Selection\n")
+cat("----------------------------------------\n")
+best_aic_idx <- which.min(c(AIC1, AIC2, AIC3, AIC4, AIC5))
+best_bic_idx <- which.min(c(BIC1, BIC2, BIC3, BIC4, BIC5))
+best_rss_idx <- which.min(c(RSS1, RSS2, RSS3, RSS4, RSS5))
+
+cat("Best model by AIC: Model", best_aic_idx, "\n")
+cat("Best model by BIC: Model", best_bic_idx, "\n")
+cat("Best model by RSS: Model", best_rss_idx, "\n\n")
+
+cat("Model Selection Rationale:\n")
+cat("The best model should have:\n")
+cat("1. Lowest AIC/BIC (better fit with penalty for complexity)\n")
+cat("2. Residuals following normal distribution (Q-Q plot close to line)\n")
+cat("3. Lowest RSS (best fit to data)\n")
+cat("4. Good balance between model complexity and predictive accuracy\n\n")
+
+# Assuming best model is determined (update based on your analysis)
+best_model_idx <- best_bic_idx
+cat("SELECTED BEST MODEL: Model", best_model_idx, "\n\n")
+
+```
+
+
+```{r}
+cat("TASK 2.7: Train-Test Split and Prediction\n")
+cat("----------------------------------------\n")
+
+set.seed(123)  # For reproducibility
+train_size <- floor(0.7 * n)
+train_idx <- sample(1:n, train_size)
+test_idx <- setdiff(1:n, train_idx)
+
+X_train <- X[train_idx, ]
+y_train <- y[train_idx]
+X_test <- X[test_idx, ]
+y_test <- y[test_idx]
+```
+
+
+```{r}
+X_train_model <- cbind(1, X_train$bg_mean, X_train$insulin_sum, X_train$carbs_sum,
+                         X_train$hr_mean, X_train$steps_sum, X_train$cals_sum,
+                         X_train$bg_mean * X_train$insulin_sum,
+                         X_train$carbs_sum * X_train$hr_mean,
+                         X_train$insulin_sum * X_train$cals_sum)
+  X_test_model <- cbind(1, X_test$bg_mean, X_test$insulin_sum, X_test$carbs_sum,
+                        X_test$hr_mean, X_test$steps_sum, X_test$cals_sum,
+                        X_test$bg_mean * X_test$insulin_sum,
+                        X_test$carbs_sum * X_test$hr_mean,
+                        X_test$insulin_sum * X_test$cals_sum)
+```
+
+
+```{r}
+# Estimate parameters on training data
+beta_train <- solve(t(X_train_model) %*% X_train_model) %*% t(X_train_model) %*% y_train
+
+y_pred_test <- X_test_model %*% beta_train
+
+residuals_train <- y_train - X_train_model %*% beta_train
+sigma <- sqrt(sum(residuals_train^2) / (nrow(X_train_model) - ncol(X_train_model)))
+
+alpha <- 0.05
+t_crit <- qt(1 - alpha/2, nrow(X_train_model) - ncol(X_train_model))
+
+
+se_pred <- sigma * sqrt(1 + diag(X_test_model %*% solve(t(X_train_model) %*% X_train_model) %*% t(X_test_model)))
+
+ci_lower <- y_pred_test - t_crit * se_pred
+ci_upper <- y_pred_test + t_crit * se_pred
+
+```
+
+
+```{r}
+# Calculate test metrics
+test_mse <- mean((y_test - y_pred_test)^2)
+test_rmse <- sqrt(test_mse)
+test_mae <- mean(abs(y_test - y_pred_test))
+test_r2 <- 1 - sum((y_test - y_pred_test)^2) / sum((y_test - mean(y_test))^2)
+
+cat("Test Set Performance:\n")
+cat("MSE:", test_mse, "\n")
+cat("RMSE:", test_rmse, "\n")
+cat("MAE:", test_mae, "\n")
+cat("R-squared:", test_r2, "\n\n")
+```
+
+
+```{r}
+
+plot_data <- data.frame(
+  Index = 1:length(y_test),
+  Actual = y_test,
+  Predicted = as.vector(y_pred_test),
+  CI_Lower = as.vector(ci_lower),
+  CI_Upper = as.vector(ci_upper)
+)
+plot_data <- plot_data[order(plot_data$Actual), ]
+plot_data$Index <- 1:nrow(plot_data)
+
+ylim_vals <- range(c(plot_data$Actual, plot_data$Predicted,
+                     plot_data$CI_Lower, plot_data$CI_Upper), na.rm = TRUE)
+
+par(mfrow = c(1, 1), mar = c(5, 5, 3, 2))
+plot(plot_data$Index, plot_data$Actual, type = "p", pch = 19, col = "blue",
+     ylim = ylim_vals, xlab = "Index", ylab = "Blood Glucose (mmol/L)",
+     main = "Predicted vs Actual Blood Glucose with 95% CI")
+
+lines(plot_data$Index, plot_data$Predicted, col = "red", lwd = 2)
+
+# Add confidence interval as shaded polygon
+polygon(c(plot_data$Index, rev(plot_data$Index)),
+        c(plot_data$CI_Upper, rev(plot_data$CI_Lower)),
+        col = rgb(1, 0, 0, 0.2), border = NA)
+
+
+legend("topright", legend = c("Actual", "Predicted", "95% CI"),
+       col = c("blue", "red", rgb(1, 0, 0, 0.2)), lty = c(NA, 1, NA),
+       pch = c(19, NA, 15), pt.cex = 1.5, bty = "n")
+```
+
+
+```{r}
+set.seed(123)
+
+# Number of ABC samples
+N <- 50000
+accept_rate <- 0.02   # keep best 2%
+
+theta1_hat <- beta5[1]   # beta1
+theta2_hat <- beta5[2]
+theta1_hat
+theta2_hat
+
+
+
+
+prior_theta1 <- runif(N, 0.8 * theta1_hat, 1.2 * theta1_hat)
+prior_theta2 <- runif(N, 0.8 * theta2_hat, 1.2 * theta2_hat)
+
+
+model5_predict <- function(data, beta) {
+  with(data, {
+    beta[1] +                       
+    beta[2] * bg_mean +             
+    beta[3] * insulin_sum +
+    beta[4] * carbs_sum +
+    beta[5] * hr_mean +
+    beta[6] * steps_sum +
+    beta[7] * cals_sum +
+    beta[8] * (bg_mean * insulin_sum) +
+    beta[9] * (carbs_sum * hr_mean) +
+    beta[10] * (insulin_sum * cals_sum)
+  })
+}
+
+
+SSE <- numeric(N)
+
+for (i in 1:N) {
+
+  beta_tmp <- beta5
+  beta_tmp[1]  <- prior_theta1[i]   
+  beta_tmp[2] <- prior_theta2[i]   
+  y_sim <- model5_predict(X, beta_tmp)
+  SSE[i] <- sum((y - y_sim)^2)
+}
+
+
+threshold <- quantile(SSE, accept_rate)
+
+accepted <- which(SSE <= threshold)
+
+theta1_post <- prior_theta2[accepted]
+theta2_post <- prior_theta1[accepted]
+```
+```{r}
+
+dens <- kde2d(theta1_post, theta2_post, n = 200)
+
+summary_metrics <- function(param) {
+  mean_val <- mean(param)
+  median_val <- median(param)
+  ci <- quantile(param, probs = c(0.025, 0.975))
+  return(list(mean = mean_val, median = median_val, ci = ci))
+}
+metrics_beta0 <- summary_metrics(theta1_post)
+metrics_beta1 <- summary_metrics(theta2_post)
+# ---- Joint Posterior Scatter and Density ----
+png("marginals_wide1.png", width = 1600, height = 800, res = 150)  # wide 2:1 aspect ratio
+par(mfrow = c(1,2), mar = c(5,4,4,2) + 0.1)
+
+plot(theta2_post, theta1_post,  # swapped axes
+     pch = 16, cex = 0.5, col = rgb(0,0,1,0.4),
+     xlab = expression(beta[0]),
+     ylab = expression(beta[1]),
+     main = "Joint Posterior Scatter")
+contour(dens, add = TRUE, drawlabels = FALSE, lwd = 2, col = "darkred")
+points(metrics_beta1$mean, metrics_beta0$mean, col = "blue", pch = 19, cex = 1.5)
+text(metrics_beta1$mean, metrics_beta0$mean, labels = "Mean", pos = 4, col = "blue")
+
+image(dens$y, dens$x, dens$z,
+      col = colorRampPalette(c("white", "steelblue"))(100),
+      xlab = expression(beta[0]),
+      ylab = expression(beta[1]),
+      main = "Joint Posterior Density")
+contour(dens$y, dens$x, dens$z, add = TRUE, drawlabels = FALSE, lwd = 2, col = "darkred")
+points(metrics_beta1$mean, metrics_beta0$mean, col = "blue", pch = 19, cex = 1.5)
+text(metrics_beta1$mean, metrics_beta0$mean, labels = "Mean", pos = 4, col = "blue")
+dev.off()
+
+# ---- 1x2 Marginal Posterior Distributions ----
+png("marginals_wide2.png", width = 1600, height = 800, res = 150)  # wide 2:1 aspect ratio
+par(mfrow = c(1,2), mar = c(5,4,4,2) + 0.1)
+
+hist(theta2_post, breaks = 30, prob = TRUE,
+     col = "skyblue", border = "white",
+     main = expression(p(beta[0]~"|~D")),
+     xlab = expression(beta[0]))
+lines(density(theta2_post), col = "blue", lwd = 2)
+abline(v = metrics_beta1$mean, col = "red", lwd = 2, lty = 2)
+abline(v = metrics_beta1$ci, col = "darkred", lwd = 2, lty = 3)
+legend("topright", legend = c("Mean", "95% CI"), lty = c(2,3), col = c("red","darkred"), bty="n")
+
+# Beta1 histogram (was beta0)
+hist(theta1_post, breaks = 30, prob = TRUE,
+     col = "lightgreen", border = "white",
+     main = expression(p(beta[1]~"|~D")),
+     xlab = expression(beta[1]))
+lines(density(theta1_post), col = "darkgreen", lwd = 2)
+abline(v = metrics_beta0$mean, col = "red", lwd = 2, lty = 2)
+abline(v = metrics_beta0$ci, col = "darkred", lwd = 2, lty = 3)
+legend("topright", legend = c("Mean", "95% CI"), lty = c(2,3), col = c("red","darkred"), bty="n")
+
+dev.off()
+
+```
+
+
+```{r}
+```
