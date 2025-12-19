@@ -202,15 +202,15 @@ pred <- ini$predictorMatrix
 meth["hr_mean"] <- "pmm"
 meth[names(meth) != "hr_mean"] <- ""        # no imputation for other vars
 pred["hr_mean", "hr_mean"] <- 0             # exclude self as predictor
-
+set.seed(123)
 # Perform multiple imputation
 imp <- mice(
   data_sub,
   method = meth,
   predictorMatrix = pred,
-  m = 5,
+  m = 20,
   maxit = 20,
-  seed = 123
+  printFlag = FALSE
 )
 
 # Complete one imputed dataset
@@ -228,7 +228,7 @@ X_scaled <- scale(X)
 # Optional: check scaling
 colMeans(X_scaled)         # should be ~0
 apply(X_scaled, 2, sd) 
-
+data[, vars] <- X_scaled
 ```
 ```{r}
 summary(X_scaled)
@@ -237,11 +237,16 @@ summary(X_scaled)
 clean_data <- read.csv("clean_dataset.csv", header = TRUE)
 summary(clean_data)
 ```
+
 ```{r}
-data[, vars] <- data_imp
-scaled_vars <- paste0(vars, "_scaled")
-data[, scaled_vars] <- as.data.frame(X_scaled)
+summary(data)
 ```
+
+```{r}
+typeof(X_scaled)
+typeof(data)
+```
+
 
 
 ```{r}
